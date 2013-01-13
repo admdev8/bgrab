@@ -12,7 +12,7 @@
 """
 import socket
 from Queue import Queue
-from threading import Thread
+from threading import Thread, Event
 from time import sleep
 
 # Version Information
@@ -50,7 +50,7 @@ def parse_file(filename):
                 pass
     if (len(lines) == 1):
         return None
-    return lines[1:]
+    return lines
 
 def thread_grab(input_queue, output_queue):
     while not input_queue.empty():
@@ -58,19 +58,27 @@ def thread_grab(input_queue, output_queue):
         output_queue.put(grab_banner(host, port))
         input_queue.task_done()
 
-def thread_output(output_queue, timeout):
-    try:
-        while True:
-            host, port, result = output_queue.get(True, timeout)
+class OutputThread(Thread):
+    def __init__(self, output_queue):
+        super(OutputThread, self).__init__()
+        self._stop = Event()
+        self._output_queue = output_queue
+
+    def run(self):
+        while not self.stopped():
+            host, port, result = self._output_queue.get()
             print("%s:%d --> %s" % (host, port, repr(result)))
-            output_queue.task_done()
-    except:
-        pass
-    print("[*] Done.")
+            self._output_queue.task_done()
+
+    def stop(self):
+        self._stop.set()
+
+    def stopped(self):
+        return self._stop.isSet()
 
 # Main
 def main(argv):
-    MAX_THRADS = 15
+    MAX_THRADS = 10
     TIMEOUT = 2
     socket.setdefaulttimeout(TIMEOUT) # two seconds
 
@@ -94,10 +102,16 @@ def main(argv):
         Thread(target=thread_grab, args=(input_queue,output_queue,)).start()
 
     # start output thread
-    Thread(target=thread_output, args=(output_queue,TIMEOUT,)).start()
+    out_thread = OutputThread(output_queue)
+    out_thread.setDaemon(True)
+    out_thread.start()
 
     input_queue.join()
     output_queue.join()
+
+    out_thread.stop()
+
+    print("[*] Done.")
 
     return True
 
